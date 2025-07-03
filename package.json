@@ -1,10 +1,13 @@
 {
   "name": "solana-api",
   "version": "1.0.0",
+  "description": "API to send BEEMX SPL tokens on Solana",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
     "@solana/web3.js": "^1.48.0",
     "@solana/spl-token": "^0.3.5",
