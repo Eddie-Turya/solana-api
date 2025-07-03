@@ -1,14 +1,17 @@
 {
-  "name": "solana-withdrawal-api",
+  "name": "solana-api",
   "version": "1.0.0",
+  "description": "SOL Withdrawal API with Phantom Base58 key",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.92.1",
+    "express": "^4.18.2",
     "body-parser": "^1.20.2",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2"
+    "bs58": "^5.0.0",
+    "tweetnacl": "^1.0.3"
   }
 }
