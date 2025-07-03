@@ -1,75 +1,86 @@
-require('dotenv').config();
+const express = require('express');
+const dotenv = require('dotenv');
+const bs58 = require('bs58');
 const {
   Connection,
-  Keypair,
   PublicKey,
+  clusterApiUrl,
+  Keypair,
+  sendAndConfirmTransaction,
   Transaction,
-  sendAndConfirmTransaction
 } = require('@solana/web3.js');
 const {
-  Token,
-  TOKEN_PROGRAM_ID
+  getOrCreateAssociatedTokenAccount,
+  createTransferInstruction,
+  TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
-const bs58 = require('bs58');
-const express = require('express');
-const bodyParser = require('body-parser');
 
+// Load env variables
+dotenv.config();
+
+// Create Express app
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-const connection = new Connection('https://api.mainnet-beta.solana.com');
+// Setup Solana connection
+const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 
-const base58Secret = process.env.ADMIN_PRIVATE_KEY_BASE58;
-const secretKey = bs58.decode(base58Secret);
-const admin = Keypair.fromSecretKey(secretKey);
+// Load admin wallet
+const secretKey = bs58.decode(process.env.ADMIN_PRIVATE_KEY_BASE58);
+const adminKeypair = Keypair.fromSecretKey(secretKey);
 
-// Replace with your BEEMX token mint address
-const BEEMX_MINT_ADDRESS = new PublicKey('ACMk9h76WrHaLFy7GYZB4yCea62KruCyj9jFQGq15P6o');
+// Mint address of BEEMX token
+const mintAddress = new PublicKey(process.env.MINT_ADDRESS);
 
-async function sendBeemx(toPubkey, amountTokens) {
-  const token = new Token(connection, BEEMX_MINT_ADDRESS, TOKEN_PROGRAM_ID, admin);
+// API Endpoint
+app.post('/withdraw', async (req, res) => {
+  try {
+    const { to, amount } = req.body;
 
-  // Get or create associated token account for admin (sender)
-  const fromTokenAccount = await token.getOrCreateAssociatedAccountInfo(admin.publicKey);
+    if (!to || !amount) {
+      return res.status(400).json({ success: false, error: 'Missing "to" or "amount" in request' });
+    }
 
-  // Get or create associated token account for receiver
-  const toTokenAccount = await token.getOrCreateAssociatedAccountInfo(toPubkey);
+    const toPublicKey = new PublicKey(to);
 
-  // BEEMX decimals (confirm decimals, usually 6)
-  const decimals = 6;
-  const amount = amountTokens * Math.pow(10, decimals);
+    // Get admin's token account (sender)
+    const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
+      connection,
+      adminKeypair,
+      mintAddress,
+      adminKeypair.publicKey
+    );
 
-  const transaction = new Transaction().add(
-    Token.createTransferInstruction(
-      TOKEN_PROGRAM_ID,
+    // Get recipient's token account (receiver)
+    const toTokenAccount = await getOrCreateAssociatedTokenAccount(
+      connection,
+      adminKeypair, // payer
+      mintAddress,
+      toPublicKey
+    );
+
+    // Create token transfer instruction (adjust decimals to 6 for BEEMX)
+    const transferInstruction = createTransferInstruction(
       fromTokenAccount.address,
       toTokenAccount.address,
-      admin.publicKey,
+      adminKeypair.publicKey,
+      amount * 10 ** 6, // Adjust based on BEEMX decimals (usually 6)
       [],
-      amount
-    )
-  );
+      TOKEN_PROGRAM_ID
+    );
 
-  const signature = await sendAndConfirmTransaction(connection, transaction, [admin]);
-  return signature;
-}
+    // Send transaction
+    const transaction = new Transaction().add(transferInstruction);
+    const signature = await sendAndConfirmTransaction(connection, transaction, [adminKeypair]);
 
-app.post('/withdraw', async (req, res) => {
-  const { to, amount } = req.body;
-
-  if (!to || !amount) {
-    return res.status(400).json({ success: false, error: 'Missing "to" or "amount" in request' });
-  }
-
-  try {
-    const toPubkey = new PublicKey(to);
-    const txSignature = await sendBeemx(toPubkey, amount);
-    res.json({ success: true, tx: txSignature });
+    return res.json({ success: true, signature });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error(error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// Start the server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
