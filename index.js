@@ -1,40 +1,30 @@
 require('dotenv').config();
-
 const express = require('express');
 const bodyParser = require('body-parser');
-
 const {
   Connection,
   Keypair,
   PublicKey,
-  sendAndConfirmTransaction,
   SystemProgram,
   Transaction,
-  LAMPORTS_PER_SOL,
+  sendAndConfirmTransaction,
+  LAMPORTS_PER_SOL
 } = require('@solana/web3.js');
-
 const bs58 = require('bs58');
-const nacl = require('tweetnacl');
 
 const app = express();
 app.use(bodyParser.json());
 
 const connection = new Connection('https://api.mainnet-beta.solana.com');
 
-// Decode Base58 private key from env and derive full Keypair
+// Use full 64-byte private key decoded from Base58
 const base58Secret = process.env.ADMIN_PRIVATE_KEY_BASE58;
-if (!base58Secret) {
-  throw new Error('ADMIN_PRIVATE_KEY_BASE58 is not set');
-}
-const privateKeyBytes = bs58.decode(base58Secret);
-const admin = Keypair.fromSecretKey(nacl.sign.keyPair.fromSeed(privateKeyBytes).secretKey);
+const secretKey = bs58.decode(base58Secret);
+const admin = Keypair.fromSecretKey(secretKey);
 
 app.post('/withdraw', async (req, res) => {
   const { to, amount } = req.body;
-
-  if (!to || !amount) {
-    return res.status(400).json({ success: false, error: 'Missing "to" or "amount" in request' });
-  }
+  if (!to || !amount) return res.status(400).json({ success: false, error: 'Missing wallet or amount.' });
 
   try {
     const toPubkey = new PublicKey(to);
@@ -47,10 +37,9 @@ app.post('/withdraw', async (req, res) => {
     );
 
     const signature = await sendAndConfirmTransaction(connection, transaction, [admin]);
-
-    return res.json({ success: true, tx: signature });
+    res.json({ success: true, tx: signature });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
