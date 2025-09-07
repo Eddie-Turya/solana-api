@@ -8,10 +8,12 @@ const {
   Keypair,
   sendAndConfirmTransaction,
   Transaction,
+  LAMPORTS_PER_SOL,
 } = require('@solana/web3.js');
 const {
   getOrCreateAssociatedTokenAccount,
   createTransferInstruction,
+  getMint,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 
@@ -32,7 +34,6 @@ const adminKeypair = Keypair.fromSecretKey(secretKey);
 // Mint address of BEEMX token
 const mintAddress = new PublicKey(process.env.MINT_ADDRESS);
 
-// API Endpoint
 app.post('/withdraw', async (req, res) => {
   try {
     const { to, amount } = req.body;
@@ -43,7 +44,21 @@ app.post('/withdraw', async (req, res) => {
 
     const toPublicKey = new PublicKey(to);
 
-    // Get admin's token account (sender)
+    // ✅ Check admin SOL balance
+    const balance = await connection.getBalance(adminKeypair.publicKey);
+    if (balance < 0.01 * LAMPORTS_PER_SOL) {
+      return res.status(400).json({
+        success: false,
+        error: 'Insufficient SOL in admin wallet to pay for fees / ATA creation',
+      });
+    }
+
+    // ✅ Get mint decimals dynamically
+    const mintInfo = await getMint(connection, mintAddress);
+    const decimals = mintInfo.decimals;
+    const amountInBaseUnits = BigInt(Math.floor(amount * 10 ** decimals));
+
+    // ✅ Ensure admin has token account (sender)
     const fromTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       adminKeypair,
@@ -51,32 +66,44 @@ app.post('/withdraw', async (req, res) => {
       adminKeypair.publicKey
     );
 
-    // Get recipient's token account (receiver)
-    const toTokenAccount = await getOrCreateAssociatedTokenAccount(
-      connection,
-      adminKeypair, // payer
-      mintAddress,
-      toPublicKey
-    );
+    // ✅ Ensure recipient has token account (create if needed)
+    let toTokenAccount;
+    try {
+      toTokenAccount = await getOrCreateAssociatedTokenAccount(
+        connection,
+        adminKeypair, // payer (covers ATA creation rent if needed)
+        mintAddress,
+        toPublicKey
+      );
+    } catch (err) {
+      console.error("❌ Failed to create recipient ATA:", err);
+      return res.status(500).json({ success: false, error: "Failed to create recipient token account" });
+    }
 
-    // Create token transfer instruction (adjust decimals to 6 for BEEMX)
+    // ✅ Create token transfer instruction
     const transferInstruction = createTransferInstruction(
       fromTokenAccount.address,
       toTokenAccount.address,
       adminKeypair.publicKey,
-      amount * 10 ** 6, // Adjust based on BEEMX decimals (usually 6)
+      amountInBaseUnits,
       [],
       TOKEN_PROGRAM_ID
     );
 
-    // Send transaction
+    // ✅ Build and send transaction
     const transaction = new Transaction().add(transferInstruction);
+    transaction.feePayer = adminKeypair.publicKey;
+    transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
     const signature = await sendAndConfirmTransaction(connection, transaction, [adminKeypair]);
 
     return res.json({ success: true, signature });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ success: false, error: error.message });
+    console.error("❌ Withdrawal error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || "Unexpected error",
+    });
   }
 });
 
